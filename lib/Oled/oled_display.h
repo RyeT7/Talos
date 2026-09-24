@@ -59,3 +59,12 @@ static void draw_eyes ( bool open ) {
 
     oled_flush();
 }
+
+static void blinking_eyes () {
+    while ( true ) {
+        draw_eyes(true);
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        draw_eyes(false);
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
+}

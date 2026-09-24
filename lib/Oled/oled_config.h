@@ -1,5 +1,10 @@
 #include "driver/i2c_master.h"
 
+#define SDA_PIN GPIO_NUM_8
+#define SCL_PIN GPIO_NUM_9
+#define OLED_ADDR 0x3c
+#define OLED_SPEED_HZ 400'000
+
 #define W 128
 #define H 64
 
@@ -37,4 +42,19 @@ enum SSD1306_commands {
     SET_VCOMH_DESELECT_LEVEL                = 0xdb,
     SET_COLUMN_ADDRESS                      = 0x21,
     SET_PAGE_ADDRESS                        = 0x22,
+};
+
+i2c_master_bus_config_t oled_bus_cfg = {
+    .i2c_port = I2C_NUM_0,  
+    .sda_io_num = SDA_PIN,
+    .scl_io_num = SCL_PIN,
+    .clk_source = I2C_CLK_SRC_DEFAULT,
+    .glitch_ignore_cnt = 7,
+    .flags.enable_internal_pullup = true,
+};
+
+i2c_device_config_t oled_dev_cfg = {
+    .dev_addr_length = I2C_ADDR_BIT_7,
+    .device_address = OLED_ADDR,
+    .scl_speed_hz = OLED_SPEED_HZ,
 };

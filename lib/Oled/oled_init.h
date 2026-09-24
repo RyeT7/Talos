@@ -1,6 +1,7 @@
 #include "oled_config.h"
 #include "commands.h"
 #include <stdint.h>
+#include <stdbool.h>
 
 static void oled_init() {
     const uint8_t startup_cmds[] = {
@@ -25,4 +26,15 @@ static void oled_init() {
     for ( size_t i = 0; i < sizeof( startup_cmds ); ++i ) {
         run_dev_cmd( oled, startup_cmds[i] );
     }
+}
+
+bool probe_oled_device (i2c_master_bus_handle_t bus) {
+    if ( i2c_master_probe(bus, OLED_ADDR, 500) != ESP_OK ) {
+        printf("Device not found at 0x%02X\n", OLED_ADDR);
+
+        return false;
+    }
+
+    printf("Found device at 0x%02X\n", OLED_ADDR);
+    return true;
 }
