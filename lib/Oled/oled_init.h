@@ -3,7 +3,21 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-static void oled_init() {
+static void oled_configs() {
+    i2c_master_bus_handle_t bus;
+
+    ESP_ERROR_CHECK(i2c_new_master_bus(&oled_bus_cfg, &bus));
+    
+    bool oled_probe_res = probe_oled_device(bus);
+
+    if ( !oled_probe_res ) {
+        return;
+    }
+
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus, &oled_dev_cfg, &oled));
+}
+
+static void oled_startup_commands() {
     const uint8_t startup_cmds[] = {
         DISPLAY_ON                          ,
         SET_DISPLAY_CLOCK_DIVIDE            , 0x80  ,
