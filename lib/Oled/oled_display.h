@@ -63,19 +63,17 @@ static void draw_eyes ( bool open ) {
 }
 
 static void blinking_eyes () {
-    while ( true ) {
-        draw_eyes(true);
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        draw_eyes(false);
-        vTaskDelay(pdMS_TO_TICKS(150));
-    }
+    draw_eyes(true);
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    draw_eyes(false);
+    vTaskDelay(pdMS_TO_TICKS(150));
 }
 
 static void audio_display ( int left_value, int right_value ) {
     clear();
 
-    fill_rect(28, 15, 25, 3);
-    fill_rect(28, 45, 25, 3);
+    fill_rect(28, 15, left_value, 3);
+    fill_rect(28, 45, right_value, 3);
 
     oled_flush();
 }
