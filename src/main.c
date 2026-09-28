@@ -6,7 +6,7 @@
 #include <stdio.h>
 
 void app_main() {
-    oled_configs();
+    oled_cfg();
     oled_startup_commands();
     blinking_eyes();
 }

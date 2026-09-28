@@ -9,6 +9,7 @@
 #define H 64
 
 static i2c_master_dev_handle_t oled;
+
 static uint8_t fb[W * H / 8];
 
 enum SSD1306_commands {

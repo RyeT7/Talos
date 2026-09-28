@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-static void oled_configs() {
+static void oled_cfg() {
     i2c_master_bus_handle_t bus;
 
     ESP_ERROR_CHECK(i2c_new_master_bus(&oled_bus_cfg, &bus));
