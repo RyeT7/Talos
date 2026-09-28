@@ -25,10 +25,7 @@ void app_main() {
                 to_bar(level.level_right)
             );
         } else {
-            audio_display(
-                0,
-                0
-            );
+            blinking_eyes();
         }
     }
 }

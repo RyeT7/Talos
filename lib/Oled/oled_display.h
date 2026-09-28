@@ -3,6 +3,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "commands.h"
+#include "esp_timer.h"
 #include <string.h>
 
 static void set_pixel ( int x, int y ) {
@@ -63,10 +64,16 @@ static void draw_eyes ( bool open ) {
 }
 
 static void blinking_eyes () {
+    static int64_t next_blink_us = 0;
+    int64_t now = esp_timer_get_time();
+
+    if ( now >= next_blink_us ) {
+        draw_eyes(false);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        next_blink_us = now + 3'000'000;
+    }
+
     draw_eyes(true);
-    vTaskDelay(pdMS_TO_TICKS(3000));
-    draw_eyes(false);
-    vTaskDelay(pdMS_TO_TICKS(150));
 }
 
 static void audio_display ( int left_value, int right_value ) {
