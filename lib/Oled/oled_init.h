@@ -3,20 +3,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-static void oled_cfg() {
-    i2c_master_bus_handle_t bus;
-
-    ESP_ERROR_CHECK(i2c_new_master_bus(&oled_bus_cfg, &bus));
-    
-    bool oled_probe_res = probe_oled_device(bus);
-
-    if ( !oled_probe_res ) {
-        return;
-    }
-
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus, &oled_dev_cfg, &oled));
-}
-
 static void oled_startup_commands() {
     const uint8_t startup_cmds[] = {
         DISPLAY_ON                          ,
@@ -42,7 +28,7 @@ static void oled_startup_commands() {
     }
 }
 
-bool probe_oled_device (i2c_master_bus_handle_t bus) {
+bool probe_oled_device ( i2c_master_bus_handle_t bus ) {
     if ( i2c_master_probe(bus, OLED_ADDR, 500) != ESP_OK ) {
         printf("Device not found at 0x%02X\n", OLED_ADDR);
 
@@ -51,4 +37,18 @@ bool probe_oled_device (i2c_master_bus_handle_t bus) {
 
     printf("Found device at 0x%02X\n", OLED_ADDR);
     return true;
+}
+
+static void oled_cfg() {
+    i2c_master_bus_handle_t bus;
+
+    ESP_ERROR_CHECK(i2c_new_master_bus(&oled_bus_cfg, &bus));
+    
+    bool oled_probe_res = probe_oled_device(bus);
+
+    if ( !oled_probe_res ) {
+        return;
+    }
+
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus, &oled_dev_cfg, &oled));
 }

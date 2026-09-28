@@ -1,5 +1,7 @@
 #include "driver/i2c_master.h"
 #include "oled_config.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "commands.h"
 #include <string.h>
 
@@ -67,4 +69,13 @@ static void blinking_eyes () {
         draw_eyes(false);
         vTaskDelay(pdMS_TO_TICKS(150));
     }
+}
+
+static void audio_display ( int left_value, int right_value ) {
+    clear();
+
+    fill_rect(28, 15, 25, 3);
+    fill_rect(28, 45, 25, 3);
+
+    oled_flush();
 }
