@@ -30,12 +30,8 @@ static void oled_startup_commands() {
 
 bool probe_oled_device ( i2c_master_bus_handle_t bus ) {
     if ( i2c_master_probe(bus, OLED_ADDR, 500) != ESP_OK ) {
-        printf("Device not found at 0x%02X\n", OLED_ADDR);
-
         return false;
     }
-
-    printf("Found device at 0x%02X\n", OLED_ADDR);
     return true;
 }
 

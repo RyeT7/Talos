@@ -4,6 +4,9 @@
 #include "mic_init.h"
 #include "mic_util.h"
 
+#include "speaker_init.h"
+#include "speaker_util.h"
+
 #include <stdio.h>
 
 #define SOUND_THRESHOLD 60'000
@@ -13,6 +16,9 @@ void app_main() {
     oled_startup_commands();
     
     mic_cfg();
+
+    speaker_cfg();
+    start_chime_loop();
     
     while (true) {
         struct AudioLevel level = read_audio();
