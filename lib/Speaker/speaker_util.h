@@ -52,7 +52,7 @@ static void startup_chime () {
 
 #define CHIME_INTERVAL_MS 1'000
 
-static void chime_task ( void *arg ) {
+static void chime_task ( void* arg ) {
     while ( true ) {
         startup_chime();
         vTaskDelay( pdMS_TO_TICKS( CHIME_INTERVAL_MS ) );

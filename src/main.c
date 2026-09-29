@@ -7,9 +7,41 @@
 #include "speaker_init.h"
 #include "speaker_util.h"
 
+#include "dht_init.h"
+#include "dht_util.h"
+
 #include <stdio.h>
 
 #define SOUND_THRESHOLD 60'000
+
+static void dht_speaker_task ( void* arg ) {
+    vTaskDelay( pdMS_TO_TICKS( 1'000 ) );
+
+    while ( true ) {
+        struct DhtReading reading;
+        esp_err_t err = read_dht( &reading );
+
+        if ( err != ESP_OK ) {
+            continue;   
+        }
+
+        if (
+            reading.temperature > dht_last.temperature
+            || reading.humidity > dht_last.humidity
+        )
+        {
+            startup_chime();
+        }
+        
+        dht_last = reading;
+
+        vTaskDelay( pdMS_TO_TICKS( DHT_INTERVAL_MS ) );
+    }
+}
+
+static void start_dht_speaker_loop () {
+    xTaskCreate( dht_speaker_task, "dht_speaker", 4'096, NULL, 5, NULL );
+}
 
 void app_main() {
     oled_cfg();
@@ -18,7 +50,10 @@ void app_main() {
     mic_cfg();
 
     speaker_cfg();
-    start_chime_loop();
+
+    dht_cfg();
+
+    start_dht_speaker_loop();
     
     while (true) {
         struct AudioLevel level = read_audio();
