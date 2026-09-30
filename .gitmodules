@@ -1,0 +1,3 @@
+[submodule "components/mqtt"]
+	path = components/mqtt
+	url = https://github.com/espressif/esp-mqtt.git
