@@ -13,6 +13,9 @@
 #include "blynk_init.h"
 #include "blynk_util.h"
 
+#include "ir_init.h"
+#include "sharp_ac_util.h"
+
 #include <stdio.h>
 
 #define SOUND_THRESHOLD 60'000
@@ -64,6 +67,10 @@ void app_main() {
     dht_cfg();
 
     blynk_cfg( on_blynk_downlink );
+
+    ir_cfg();
+    start_ir_listen_loop( sharp_ac_on_frame );
+    start_sharp_ac_console();
 
     start_dht_speaker_loop();
     

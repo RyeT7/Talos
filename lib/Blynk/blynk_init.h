@@ -96,7 +96,7 @@ static void wifi_handler (
         id == WIFI_EVENT_STA_DISCONNECTED
     ) {
         wifi_event_sta_disconnected_t* dc_event = data;
-        ESP_LOGW("WIFI", "Yooooo, I disconnected, reconnecting ts: %d", dc_event->reason);
+        // ESP_LOGW("WIFI", "Yooooo, I disconnected, reconnecting ts: %d", dc_event->reason);
         esp_wifi_connect();
     } else if ( base == IP_EVENT && id == IP_EVENT_STA_GOT_IP ) {
         ip_event_got_ip_t* ip_event = data;
