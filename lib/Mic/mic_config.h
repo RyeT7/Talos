@@ -2,22 +2,27 @@
 
 #include "driver/i2s_std.h"
 
+// I2S pins for the mic
 #define WS_PIN GPIO_NUM_4
 #define SCK_PIN GPIO_NUM_5
 #define SD_PIN GPIO_NUM_6
 
+// 16 kHz is plenty for just checking how loud it is
 #define SAMPLE_RATE 16'000
+// how many samples we grab per read, both channels together
 #define NUM_SAMPLE 3'200
 
 extern int32_t samples[NUM_SAMPLE];
 
 extern i2s_chan_handle_t rx;
 
+// mic is on I2S port 0 and the ESP is the master
 i2s_chan_config_t mic_chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(
     I2S_NUM_0,
     I2S_ROLE_MASTER
 );
 
+// 32 bit stereo, receive only so no mclk and no dout
 i2s_std_config_t mic_std_cfg = {
     .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
     .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(

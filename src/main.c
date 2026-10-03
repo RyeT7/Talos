@@ -18,23 +18,29 @@
 
 #include <stdio.h>
 
+// if the mic level goes above this we show the audio bars instead of the eyes, got this number by testing it manually irl
 #define SOUND_THRESHOLD 60'000
 
+// reads the DHT every few seconds, sends it to Blynk, and beeps if it got hotter or more humid
 static void dht_speaker_task ( void* arg ) {
+    // give the DHT a sec to wake up first
     vTaskDelay( pdMS_TO_TICKS( 1'000 ) );
 
     while ( true ) {
         struct DhtReading reading;
         esp_err_t err = read_dht( &reading );
 
+        // bad read, just skip this round and try again later
         if ( err != ESP_OK ) {
             vTaskDelay( pdMS_TO_TICKS( DHT_INTERVAL_MS ) );
             continue;
         }
 
+        // push the readings to the dashboard
         blynk_send_float( BLYNK_DS_TEMPERATURE, reading.temperature );
         blynk_send_float( BLYNK_DS_HUMIDITY, reading.humidity );
 
+        // beep if either one went up compared to the last reading
         if (
             reading.temperature > dht_last.temperature
             || reading.humidity > dht_last.humidity
@@ -48,15 +54,18 @@ static void dht_speaker_task ( void* arg ) {
     }
 }
 
+// gets called whenever Blynk sends something down to us, for now it just prints it
 static void on_blynk_downlink ( const char* datastream, const char* value ) {
     printf("Blynk: %s = %s\n", datastream, value);
 }
 
+// runs the DHT and speaker stuff in its own task so it doesn't block the main loop
 static void start_dht_speaker_loop () {
     xTaskCreate( dht_speaker_task, "dht_speaker", 4'096, NULL, 5, NULL );
 }
 
 void app_main() {
+    // set up the screen first so we can see stuff early
     oled_cfg();
     oled_startup_commands();
     
@@ -66,20 +75,24 @@ void app_main() {
 
     dht_cfg();
 
+    // wifi and Blynk, also tells it what to do when Blynk sends us data
     blynk_cfg( on_blynk_downlink );
 
+    // IR stuff, listens for remote frames and opens the serial console for the AC
     ir_cfg();
     start_ir_listen_loop( sharp_ac_on_frame );
     start_sharp_ac_console();
 
     start_dht_speaker_loop();
     
+    // main loop, reads the mic and decides what to show on the screen
     while (true) {
         struct AudioLevel level = read_audio();
         // printf("L: %d  R: %d\n", level.level_left, level.level_right);
 
         blynk_send_int( BLYNK_DS_AUDIO_LEVEL, level.level_left );
 
+        // if loud enough, show the bars, otherwise just do the blinking eyes
         if ( level.level_left > SOUND_THRESHOLD
                 || level.level_right > SOUND_THRESHOLD ) {
             audio_display(

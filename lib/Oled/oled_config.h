@@ -2,18 +2,23 @@
 
 #include "driver/i2c_master.h"
 
+// I2C pins, the screen address, and 400 kHz fast mode
 #define SDA_PIN GPIO_NUM_8
 #define SCL_PIN GPIO_NUM_9
 #define OLED_ADDR 0x3c
 #define OLED_SPEED_HZ 400'000
 
+// screen size in pixels
 #define W 128
 #define H 64
 
+// handle for the screen
 static i2c_master_dev_handle_t oled;
 
+// frame buffer, 1 bit per pixel and each byte is 8 pixels going down
 static uint8_t fb[W * H / 8];
 
+// SSD1306 commands from the datasheet
 enum SSD1306_commands {
     SET_CONTRAST                            = 0x81,
     RAM_CONTENT_DISPLAY                     = 0xa4,
@@ -47,6 +52,7 @@ enum SSD1306_commands {
     SET_PAGE_ADDRESS                        = 0x22,
 };
 
+// I2C bus config, uses the internal pull ups so we don't need resistors
 i2c_master_bus_config_t oled_bus_cfg = {
     .i2c_port = I2C_NUM_0,  
     .sda_io_num = SDA_PIN,
@@ -56,6 +62,7 @@ i2c_master_bus_config_t oled_bus_cfg = {
     .flags.enable_internal_pullup = true,
 };
 
+// the screen itself on the bus
 i2c_device_config_t oled_dev_cfg = {
     .dev_addr_length = I2C_ADDR_BIT_7,
     .device_address = OLED_ADDR,

@@ -2,16 +2,21 @@
 
 #include "driver/gpio.h"
 
+// data pin for the DHT22
 #define DHT_PIN GPIO_NUM_17
 
+// DHT22 can't be read faster than every 2 seconds
 #define DHT_INTERVAL_MS 2'000
-#define DHT_TIMEOUT_US 200
+// if the pin doesn't change for this long something's wrong
+#define DHT_TIMEOUT_MICROSECONDS 200
 
+// one reading from the sensor
 struct DhtReading {
     float temperature;
     float humidity;
 };
 
+// open drain with pull up so we can both pull it low and read from the same pin
 gpio_config_t dht_io_cfg = {
     .pin_bit_mask = 1ULL << DHT_PIN,
     .mode = GPIO_MODE_INPUT_OUTPUT_OD,

@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+// the usual SSD1306 init stuff for a 128x64 screen, mostly taken from the datasheet
 static void oled_startup_commands() {
     const uint8_t startup_cmds[] = {
         DISPLAY_ON                          ,
@@ -28,6 +29,7 @@ static void oled_startup_commands() {
     }
 }
 
+// checks if the screen actually shows up on the bus
 bool probe_oled_device ( i2c_master_bus_handle_t bus ) {
     if ( i2c_master_probe(bus, OLED_ADDR, 500) != ESP_OK ) {
         return false;
@@ -35,6 +37,7 @@ bool probe_oled_device ( i2c_master_bus_handle_t bus ) {
     return true;
 }
 
+// sets up the I2C bus and adds the screen, gives up quietly if it's not plugged in
 static void oled_cfg() {
     i2c_master_bus_handle_t bus;
 

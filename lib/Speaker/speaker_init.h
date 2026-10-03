@@ -1,7 +1,9 @@
 #include "speaker_config.h"
 
+// handle for the speaker channel
 i2s_chan_handle_t tx;
 
+// sets up the speaker channel and starts it, auto clear makes it play silence when there's nothing to send
 static void speaker_cfg () {
     spk_chan_cfg.auto_clear = true;
 

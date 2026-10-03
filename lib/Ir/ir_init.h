@@ -1,6 +1,7 @@
 #include "ir_config.h"
 #include "driver/gpio.h"
 
+// runs in the interrupt when a frame is done, just throws it into the queue for the listen task
 static bool ir_rx_done_cb (
     rmt_channel_handle_t chan,
     const rmt_rx_done_event_data_t* edata,
@@ -12,7 +13,9 @@ static bool ir_rx_done_cb (
     return woken == pdTRUE;
 }
 
+// sets up both IR channels
 static void ir_cfg () {
+    // TX side with the carrier and the encoder
     ESP_ERROR_CHECK( rmt_new_tx_channel( &ir_tx_cfg, &ir_tx ) );
     ESP_ERROR_CHECK( rmt_apply_carrier( ir_tx, &ir_carrier_cfg ) );
     ESP_ERROR_CHECK( rmt_new_copy_encoder( &ir_encoder_cfg, &ir_encoder ) );
@@ -20,6 +23,7 @@ static void ir_cfg () {
 
     ESP_ERROR_CHECK( gpio_set_drive_capability( IR_TX_PIN, IR_TX_DRIVE ) );
 
+    // RX side, the queue only needs to hold one frame at a time
     ir_rx_queue = xQueueCreate( 1, sizeof( rmt_rx_done_event_data_t ) );
 
     rmt_rx_event_callbacks_t ir_rx_cbs = {
