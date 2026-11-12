@@ -15,6 +15,8 @@ READINGS_TOPIC = "talos/readings"
 PREDICTIONS_TOPIC = "talos/predictions"
 UTC_OFFSET = pd.Timedelta(hours=7)
 HISTORY_ROWS = 1200
+ACTIVITY_RATIO = 2.0
+ACTIVITY_HOLD_ROWS = 450
 
 forecast = joblib.load(HERE / "temp_forecast_model.pkl")
 anomaly = joblib.load(HERE / "anomaly_model.pkl")
@@ -41,7 +43,8 @@ def minutes():
     df["temp_c"] = df["temp_c"].rolling(5, center=True, min_periods=1).median()
     df["humidity_pct"] = df["humidity_pct"].rolling(5, center=True, min_periods=1).median()
     df["mic_median_5m"] = df["mic_peak"].rolling(150, min_periods=150).median()
-    df["occupied"] = (df["mic_median_5m"] >= 30_000).astype(int)
+    df["activity"] = (df["mic_peak"] >= ACTIVITY_RATIO * df["mic_median_5m"]).astype(int)
+    df["occupied"] = df["activity"].rolling(ACTIVITY_HOLD_ROWS, min_periods=1).max().astype(int)
     df["hour"] = df["pc_time"].dt.hour
     df["weekday"] = df["pc_time"].dt.weekday
     df = df.dropna(subset=["mic_median_5m"])
