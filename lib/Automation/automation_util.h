@@ -203,6 +203,7 @@ static void automation_apply ( enum AutoAction action, int new_setpoint, const c
     char ir[LOG_IR_LEN];
     snprintf( ir, sizeof( ir ), "%s:%s", prefix, state );
     logger_set_ir( ir );
+    thingsboard_send_auto_cmd( ir );
 
     printf("Auto: %s -> %s\n", who, state);
     automation_announce( action, new_setpoint );
@@ -251,7 +252,7 @@ static void automation_on_row ( float temp, float hum, bool dht_valid, int mic_p
     }
 }
 
-static void automation_on_prediction ( const char* setting, float confidence ) {
+static void automation_on_prediction ( const char* setting, float confidence, float temp_in_10m, int anomalies ) {
     if ( !auto_mutex ) {
         return;
     }
@@ -263,9 +264,18 @@ static void automation_on_prediction ( const char* setting, float confidence ) {
 
     int new_setpoint = setpoint;
 
+    enum AutoAction action = AUTO_NONE;
+
     xSemaphoreTake( auto_mutex, portMAX_DELAY );
-    enum AutoAction action = auto_decide_model( &auto_state, auto_now_s(), setting, confidence, ac_on, setpoint, &new_setpoint );
+
+    if ( setting[0] ) {
+        action = auto_decide_model( &auto_state, auto_now_s(), setting, confidence, ac_on, setpoint, &new_setpoint );
+    }
+
+    int streak = auto_state.model_streak;
     xSemaphoreGive( auto_mutex );
+
+    thingsboard_send_prediction( setting, confidence, temp_in_10m, anomalies, streak );
 
     if ( action != AUTO_NONE ) {
         char who[AUTO_STATE_LEN];
@@ -379,7 +389,7 @@ static bool automation_console ( const char* cmd, const char* arg ) {
 
 static void automation_cfg () {
     auto_mutex = xSemaphoreCreateMutex();
-    auto_init( &auto_state, automation_load_flag( AUTO_NVS_KEY, 1 ), automation_load_flag( AUTO_NVS_MODEL_KEY, 0 ) );
+    auto_init( &auto_state, automation_load_flag( AUTO_NVS_KEY, 1 ), automation_load_flag( AUTO_NVS_MODEL_KEY, 1 ) );
 
     sharp_ac_manual_cb = automation_on_manual;
     sharp_ac_extra_cmd_cb = automation_console;

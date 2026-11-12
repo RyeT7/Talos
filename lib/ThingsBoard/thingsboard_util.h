@@ -8,8 +8,10 @@
 #include "esp_netif.h"
 #include "esp_log.h"
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef bool ( *tb_get_auto_cb_t )( void );
@@ -255,6 +257,34 @@ static void thingsboard_on_row ( float temp, float hum, bool dht_valid, int mic_
     tb_rows = 0;
     tb_mic_max = 0;
     tb_ir[0] = '\0';
+}
+
+static void thingsboard_send_prediction ( const char* setting, float confidence, float temp_in_10m, int anomalies, int streak ) {
+    char payload[TB_PAYLOAD_LEN];
+    int n = snprintf( payload, sizeof( payload ), "{\"pred_anomalies\":%d,\"auto_streak\":%d", anomalies, streak );
+
+    if ( !isnan( temp_in_10m ) ) {
+        n += snprintf( payload + n, sizeof( payload ) - n, ",\"pred_temp_10m\":%.2f", temp_in_10m );
+    }
+
+    if ( setting[0] ) {
+        n += snprintf(
+            payload + n, sizeof( payload ) - n,
+            ",\"pred_ac\":\"%s\",\"pred_ac_setpoint\":%d,\"pred_confidence\":%.2f",
+            setting,
+            strcmp( setting, "off" ) == 0 ? 0 : atoi( setting ),
+            confidence
+        );
+    }
+
+    snprintf( payload + n, sizeof( payload ) - n, "}" );
+    tb_publish( TB_TELEMETRY_TOPIC, payload );
+}
+
+static void thingsboard_send_auto_cmd ( const char* cmd ) {
+    char payload[TB_PAYLOAD_LEN];
+    snprintf( payload, sizeof( payload ), "{\"auto_cmd\":\"%s\"}", cmd );
+    tb_publish( TB_TELEMETRY_TOPIC, payload );
 }
 
 static void thingsboard_cfg_model ( tb_get_auto_cb_t get_cb, tb_set_auto_cb_t set_cb ) {

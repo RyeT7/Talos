@@ -12,6 +12,7 @@
 #include "esp_timer.h"
 #include "mqtt_client.h"
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -44,7 +45,7 @@ static volatile bool db_online = false;
 static TaskHandle_t db_task_handle = NULL;
 static char db_prediction[DB_PREDICTION_LEN] = "";
 
-typedef void ( *db_prediction_cb_t )( const char* setting, float confidence );
+typedef void ( *db_prediction_cb_t )( const char* setting, float confidence, float temp_in_10m, int anomalies );
 
 static db_prediction_cb_t db_prediction_cb = NULL;
 
@@ -92,16 +93,32 @@ static bool db_json_number ( const char* json, const char* key, float* out ) {
 }
 
 static void db_handle_prediction ( const char* json ) {
+    if ( !db_prediction_cb ) {
+        return;
+    }
+
     char setting[DB_SETTING_LEN];
     float confidence;
+    float temp_in_10m;
+    float anomalies;
 
     if (
-        db_prediction_cb
-        && db_json_string( json, "\"ac_recommendation\":", setting, sizeof( setting ) )
-        && db_json_number( json, "\"confidence\":", &confidence )
+        !db_json_string( json, "\"ac_recommendation\":", setting, sizeof( setting ) )
+        || !db_json_number( json, "\"confidence\":", &confidence )
     ) {
-        db_prediction_cb( setting, confidence );
+        setting[0] = '\0';
+        confidence = NAN;
     }
+
+    if ( !db_json_number( json, "\"temp_in_10m\":", &temp_in_10m ) ) {
+        temp_in_10m = NAN;
+    }
+
+    if ( !db_json_number( json, "\"anomalies\":", &anomalies ) ) {
+        anomalies = 0;
+    }
+
+    db_prediction_cb( setting, confidence, temp_in_10m, ( int )anomalies );
 }
 
 static int64_t db_epoch_ms () {
