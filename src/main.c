@@ -97,6 +97,8 @@ void app_main() {
     automation_cfg();
     thingsboard_cfg( automation_is_enabled, automation_set_enabled );
     speaker_set_state_cb( thingsboard_note_speaker );
+    thingsboard_cfg_model( automation_uses_model, automation_set_use_model );
+    database_set_prediction_cb( automation_on_prediction );
     database_cfg();
 
     // IR stuff, listens for remote frames and opens the serial console for the AC

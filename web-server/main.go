@@ -21,6 +21,10 @@ type Reading struct {
 	Humidity    *float64 `json:"humidity"`
 	MicPeak     int64    `json:"mic_peak"`
 	IrCmd       *string  `json:"ir_cmd"`
+	AcPower     *bool    `json:"ac_power"`
+	AcMode      *string  `json:"ac_mode"`
+	AcSetpoint  *int64   `json:"ac_setpoint"`
+	AcFan       *string  `json:"ac_fan"`
 }
 
 const createTable = `
@@ -33,12 +37,22 @@ CREATE TABLE IF NOT EXISTS readings (
     ir_cmd      TEXT,
     received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (ts, uptime_ms)
+);
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS ac_power BOOLEAN;
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS ac_mode TEXT;
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS ac_setpoint SMALLINT;
+ALTER TABLE readings ADD COLUMN IF NOT EXISTS ac_fan TEXT;
+CREATE TABLE IF NOT EXISTS predictions (
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    payload     JSONB NOT NULL
 )`
 
 const insertReading = `
-INSERT INTO readings (ts, uptime_ms, temperature, humidity, mic_peak, ir_cmd)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO readings (ts, uptime_ms, temperature, humidity, mic_peak, ir_cmd, ac_power, ac_mode, ac_setpoint, ac_fan)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT DO NOTHING`
+
+const insertPrediction = `INSERT INTO predictions (payload) VALUES ($1)`
 
 func main() {
 	ctx := context.Background()
@@ -77,8 +91,23 @@ func main() {
 			ts = &t
 		}
 
-		if _, err := db.Exec(ctx, insertReading, ts, r.UptimeMs, r.Temperature, r.Humidity, r.MicPeak, r.IrCmd); err != nil {
+		if _, err := db.Exec(ctx, insertReading, ts, r.UptimeMs, r.Temperature, r.Humidity, r.MicPeak, r.IrCmd, r.AcPower, r.AcMode, r.AcSetpoint, r.AcFan); err != nil {
 			log.Printf("insert: %v", err)
+		}
+	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = server.Subscribe("talos/predictions", 3, func(cl *mqtt.Client, sub packets.Subscription, pk packets.Packet) {
+		if !json.Valid(pk.Payload) {
+			log.Printf("bad prediction %q", pk.Payload)
+			return
+		}
+
+		if _, err := db.Exec(ctx, insertPrediction, string(pk.Payload)); err != nil {
+			log.Printf("insert prediction: %v", err)
 		}
 	})
 

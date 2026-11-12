@@ -19,6 +19,8 @@ static esp_mqtt_client_handle_t tb_client = NULL;
 static volatile bool tb_ok = false;
 static tb_get_auto_cb_t tb_get_auto_cb = NULL;
 static tb_set_auto_cb_t tb_set_auto_cb = NULL;
+static tb_get_auto_cb_t tb_get_model_cb = NULL;
+static tb_set_auto_cb_t tb_set_model_cb = NULL;
 
 static int tb_rows = 0;
 static int tb_mic_max = 0;
@@ -47,6 +49,10 @@ static void thingsboard_send_automation ( bool on ) {
     tb_publish( TB_ATTRIBUTES_TOPIC, on ? "{\"automation\":true}" : "{\"automation\":false}" );
 }
 
+static void thingsboard_send_use_model ( bool use_model ) {
+    tb_publish( TB_ATTRIBUTES_TOPIC, use_model ? "{\"use_model\":true}" : "{\"use_model\":false}" );
+}
+
 static bool tb_params_true ( const char* payload ) {
     const char* p = strstr( payload, "\"params\"" );
 
@@ -66,7 +72,15 @@ static bool tb_params_true ( const char* payload ) {
 static void tb_handle_rpc ( const char* id, const char* payload ) {
     bool on;
 
-    if ( strstr( payload, TB_RPC_SET_AUTOMATION ) ) {
+    if ( strstr( payload, TB_RPC_SET_USE_MODEL ) ) {
+        on = tb_params_true( payload );
+
+        if ( tb_set_model_cb ) {
+            tb_set_model_cb( on );
+        }
+    } else if ( strstr( payload, TB_RPC_GET_USE_MODEL ) ) {
+        on = tb_get_model_cb ? tb_get_model_cb() : false;
+    } else if ( strstr( payload, TB_RPC_SET_AUTOMATION ) ) {
         on = tb_params_true( payload );
 
         if ( tb_set_auto_cb ) {
@@ -96,6 +110,10 @@ static void tb_event_handler ( void* arg, esp_event_base_t base, int32_t id, voi
 
         if ( tb_get_auto_cb ) {
             thingsboard_send_automation( tb_get_auto_cb() );
+        }
+
+        if ( tb_get_model_cb ) {
+            thingsboard_send_use_model( tb_get_model_cb() );
         }
 
         break;
@@ -237,6 +255,11 @@ static void thingsboard_on_row ( float temp, float hum, bool dht_valid, int mic_
     tb_rows = 0;
     tb_mic_max = 0;
     tb_ir[0] = '\0';
+}
+
+static void thingsboard_cfg_model ( tb_get_auto_cb_t get_cb, tb_set_auto_cb_t set_cb ) {
+    tb_get_model_cb = get_cb;
+    tb_set_model_cb = set_cb;
 }
 
 static void thingsboard_cfg ( tb_get_auto_cb_t get_cb, tb_set_auto_cb_t set_cb ) {

@@ -18,6 +18,7 @@
 enum VoiceClip {
     VOICE_AC_OFF,
     VOICE_AC_ON_16,
+    VOICE_SET_16,
     VOICE_SET_19,
     VOICE_SET_20,
     VOICE_SET_21,
@@ -28,6 +29,8 @@ extern const uint8_t voice_ac_off_start[] asm( "_binary_ac_off_wav_start" );
 extern const uint8_t voice_ac_off_end[] asm( "_binary_ac_off_wav_end" );
 extern const uint8_t voice_ac_on_16_start[] asm( "_binary_ac_on_16_wav_start" );
 extern const uint8_t voice_ac_on_16_end[] asm( "_binary_ac_on_16_wav_end" );
+extern const uint8_t voice_set_16_start[] asm( "_binary_set_16_wav_start" );
+extern const uint8_t voice_set_16_end[] asm( "_binary_set_16_wav_end" );
 extern const uint8_t voice_set_19_start[] asm( "_binary_set_19_wav_start" );
 extern const uint8_t voice_set_19_end[] asm( "_binary_set_19_wav_end" );
 extern const uint8_t voice_set_20_start[] asm( "_binary_set_20_wav_start" );
@@ -44,6 +47,7 @@ struct VoiceWav {
 static const struct VoiceWav voice_wavs[VOICE_CLIP_COUNT] = {
     [VOICE_AC_OFF] = { voice_ac_off_start, voice_ac_off_end, "ac_off" },
     [VOICE_AC_ON_16] = { voice_ac_on_16_start, voice_ac_on_16_end, "ac_on_16" },
+    [VOICE_SET_16] = { voice_set_16_start, voice_set_16_end, "set_16" },
     [VOICE_SET_19] = { voice_set_19_start, voice_set_19_end, "set_19" },
     [VOICE_SET_20] = { voice_set_20_start, voice_set_20_end, "set_20" },
     [VOICE_SET_21] = { voice_set_21_start, voice_set_21_end, "set_21" },

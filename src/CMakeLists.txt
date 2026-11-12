@@ -8,6 +8,7 @@ idf_component_register(
     EMBED_FILES
         voice/ac_off.wav
         voice/ac_on_16.wav
+        voice/set_16.wav
         voice/set_19.wav
         voice/set_20.wav
         voice/set_21.wav

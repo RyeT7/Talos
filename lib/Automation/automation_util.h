@@ -19,6 +19,7 @@
 
 #define AUTO_NVS_NAMESPACE "talos"
 #define AUTO_NVS_KEY "auto_en"
+#define AUTO_NVS_MODEL_KEY "auto_model"
 #define AUTO_BLYNK_SYNC_S 60
 #define AUTO_LAST_LEN 160
 #define AUTO_STATE_LEN 32
@@ -33,19 +34,19 @@ static int64_t auto_now_s () {
     return esp_timer_get_time() / 1'000'000;
 }
 
-static bool automation_load_enabled () {
+static bool automation_load_flag ( const char* key, uint8_t fallback ) {
     nvs_handle_t h;
-    uint8_t value = 1;
+    uint8_t value = fallback;
 
     if ( nvs_open( AUTO_NVS_NAMESPACE, NVS_READONLY, &h ) == ESP_OK ) {
-        nvs_get_u8( h, AUTO_NVS_KEY, &value );
+        nvs_get_u8( h, key, &value );
         nvs_close( h );
     }
 
     return value != 0;
 }
 
-static void automation_save_enabled ( bool on ) {
+static void automation_save_flag ( const char* key, bool on ) {
     nvs_handle_t h;
 
     if ( nvs_open( AUTO_NVS_NAMESPACE, NVS_READWRITE, &h ) != ESP_OK ) {
@@ -53,7 +54,7 @@ static void automation_save_enabled ( bool on ) {
         return;
     }
 
-    nvs_set_u8( h, AUTO_NVS_KEY, on ? 1 : 0 );
+    nvs_set_u8( h, key, on ? 1 : 0 );
     nvs_commit( h );
     nvs_close( h );
 }
@@ -69,12 +70,42 @@ static void automation_set_enabled ( bool on ) {
     xSemaphoreGive( auto_mutex );
 
     if ( changed ) {
-        automation_save_enabled( on );
+        automation_save_flag( AUTO_NVS_KEY, on );
     }
 
     printf("Auto: %s\n", on ? "enabled" : "disabled");
     blynk_send_int( BLYNK_DS_AUTOMATION, on ? 1 : 0 );
     thingsboard_send_automation( on );
+}
+
+static void automation_set_use_model ( bool use_model ) {
+    if ( !auto_mutex ) {
+        return;
+    }
+
+    xSemaphoreTake( auto_mutex, portMAX_DELAY );
+    bool changed = auto_state.use_model != use_model;
+    auto_state.use_model = use_model;
+    xSemaphoreGive( auto_mutex );
+
+    if ( changed ) {
+        automation_save_flag( AUTO_NVS_MODEL_KEY, use_model );
+    }
+
+    printf("Auto: using the %s\n", use_model ? "model" : "rules");
+    thingsboard_send_use_model( use_model );
+}
+
+static bool automation_uses_model () {
+    if ( !auto_mutex ) {
+        return false;
+    }
+
+    xSemaphoreTake( auto_mutex, portMAX_DELAY );
+    bool use_model = auto_state.use_model;
+    xSemaphoreGive( auto_mutex );
+
+    return use_model;
 }
 
 static bool automation_is_enabled () {
@@ -114,11 +145,12 @@ static void automation_announce ( enum AutoAction action, int setpoint ) {
         break;
 
     case AUTO_ON_COOL16:
-        voice_say( VOICE_AC_ON_16 );
-        break;
-
     case AUTO_SETPOINT:
-        if ( setpoint == 19 ) {
+        if ( action == AUTO_ON_COOL16 && setpoint == AUTO_ON_SETPOINT ) {
+            voice_say( VOICE_AC_ON_16 );
+        } else if ( setpoint == 16 ) {
+            voice_say( VOICE_SET_16 );
+        } else if ( setpoint == 19 ) {
             voice_say( VOICE_SET_19 );
         } else if ( setpoint == 20 ) {
             voice_say( VOICE_SET_20 );
@@ -133,7 +165,7 @@ static void automation_announce ( enum AutoAction action, int setpoint ) {
     }
 }
 
-static void automation_apply ( enum AutoAction action, int new_setpoint ) {
+static void automation_apply ( enum AutoAction action, int new_setpoint, const char* who, const char* prefix ) {
     esp_err_t err = ESP_OK;
     char state[AUTO_STATE_LEN];
 
@@ -164,15 +196,15 @@ static void automation_apply ( enum AutoAction action, int new_setpoint ) {
     sharp_ac_unlock();
 
     if ( err != ESP_OK ) {
-        printf("Auto: %s failed (%s)\n", auto_action_rule( action ), esp_err_to_name( err ));
+        printf("Auto: %s failed (%s)\n", who, esp_err_to_name( err ));
         return;
     }
 
     char ir[LOG_IR_LEN];
-    snprintf( ir, sizeof( ir ), "auto:%s", state );
+    snprintf( ir, sizeof( ir ), "%s:%s", prefix, state );
     logger_set_ir( ir );
 
-    printf("Auto: %s -> %s\n", auto_action_rule( action ), state);
+    printf("Auto: %s -> %s\n", who, state);
     automation_announce( action, new_setpoint );
 
     struct tm tm;
@@ -183,7 +215,7 @@ static void automation_apply ( enum AutoAction action, int new_setpoint ) {
     }
 
     xSemaphoreTake( auto_mutex, portMAX_DELAY );
-    snprintf( auto_last_action, sizeof( auto_last_action ), "%s -> %s at %s %llds", auto_action_rule( action ), state, when, auto_now_s() );
+    snprintf( auto_last_action, sizeof( auto_last_action ), "%s -> %s at %s %llds", who, state, when, auto_now_s() );
     xSemaphoreGive( auto_mutex );
 }
 
@@ -210,12 +242,35 @@ static void automation_on_row ( float temp, float hum, bool dht_valid, int mic_p
     xSemaphoreGive( auto_mutex );
 
     if ( action != AUTO_NONE ) {
-        automation_apply( action, new_setpoint );
+        automation_apply( action, new_setpoint, auto_action_rule( action ), "auto" );
     }
 
     if ( in.now_s - auto_last_blynk_sync >= AUTO_BLYNK_SYNC_S ) {
         auto_last_blynk_sync = in.now_s;
         blynk_send_int( BLYNK_DS_AUTOMATION, enabled ? 1 : 0 );
+    }
+}
+
+static void automation_on_prediction ( const char* setting, float confidence ) {
+    if ( !auto_mutex ) {
+        return;
+    }
+
+    sharp_ac_lock();
+    bool ac_on = sharp_ac.power;
+    int setpoint = sharp_ac.temp;
+    sharp_ac_unlock();
+
+    int new_setpoint = setpoint;
+
+    xSemaphoreTake( auto_mutex, portMAX_DELAY );
+    enum AutoAction action = auto_decide_model( &auto_state, auto_now_s(), setting, confidence, ac_on, setpoint, &new_setpoint );
+    xSemaphoreGive( auto_mutex );
+
+    if ( action != AUTO_NONE ) {
+        char who[AUTO_STATE_LEN];
+        snprintf( who, sizeof( who ), "model %s (%.0f%%)", setting, confidence * 100 );
+        automation_apply( action, new_setpoint, who, "model" );
     }
 }
 
@@ -240,7 +295,21 @@ static void automation_print_status () {
     strlcpy( source, auto_override_source, sizeof( source ) );
     xSemaphoreGive( auto_mutex );
 
-    printf("Auto: %s\n", s.enabled ? "enabled" : "disabled");
+    printf("Auto: %s, using the %s\n", s.enabled ? "enabled" : "disabled", s.use_model ? "model" : "rules");
+
+    if ( s.model_last_at == AUTO_NEVER ) {
+        printf("  model: no prediction received\n");
+    } else {
+        printf(
+            "  model: %s, confidence %.0f%%, %d/%d in a row, %lld s ago\n",
+            s.model_setting[0] ? s.model_setting : "unsure",
+            s.model_confidence * 100,
+            s.model_streak,
+            AUTO_MODEL_STREAK,
+            now - s.model_last_at
+        );
+    }
+
     printf("  mic 5-min median: %d (window %d/%d, threshold %d)\n", s.median, s.mic_count, AUTO_MIC_WINDOW, AUTO_OCCUPIED_MIC);
     printf("  presence: %s", automation_presence_name( s.presence ));
 
@@ -279,13 +348,23 @@ static bool automation_console ( const char* cmd, const char* arg ) {
         const char* what = strtok( NULL, " " );
 
         if ( !what ) {
-            printf("Usage: auto say on|off|19|20|21\n");
+            printf("Usage: auto say on|off|16|19|20|21\n");
         } else if ( strcmp( what, "on" ) == 0 ) {
             automation_announce( AUTO_ON_COOL16, AUTO_ON_SETPOINT );
         } else if ( strcmp( what, "off" ) == 0 ) {
             automation_announce( AUTO_OFF, 0 );
         } else {
             automation_announce( AUTO_SETPOINT, atoi( what ) );
+        }
+    } else if ( arg && strcmp( arg, "use" ) == 0 ) {
+        const char* what = strtok( NULL, " " );
+
+        if ( what && strcmp( what, "model" ) == 0 ) {
+            automation_set_use_model( true );
+        } else if ( what && strcmp( what, "rules" ) == 0 ) {
+            automation_set_use_model( false );
+        } else {
+            printf("Usage: auto use rules|model\n");
         }
     } else if ( arg && strcmp( arg, "on" ) == 0 ) {
         automation_set_enabled( true );
@@ -300,11 +379,11 @@ static bool automation_console ( const char* cmd, const char* arg ) {
 
 static void automation_cfg () {
     auto_mutex = xSemaphoreCreateMutex();
-    auto_init( &auto_state, automation_load_enabled() );
+    auto_init( &auto_state, automation_load_flag( AUTO_NVS_KEY, 1 ), automation_load_flag( AUTO_NVS_MODEL_KEY, 0 ) );
 
     sharp_ac_manual_cb = automation_on_manual;
     sharp_ac_extra_cmd_cb = automation_console;
     logger_add_row_cb( automation_on_row );
 
-    printf("Auto: %s\n", auto_state.enabled ? "enabled" : "disabled");
+    printf("Auto: %s, using the %s\n", auto_state.enabled ? "enabled" : "disabled", auto_state.use_model ? "model" : "rules");
 }

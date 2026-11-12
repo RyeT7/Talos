@@ -18,6 +18,8 @@
 
 #define TB_RPC_GET_AUTOMATION "getAutomation"
 #define TB_RPC_SET_AUTOMATION "setAutomation"
+#define TB_RPC_GET_USE_MODEL "getUseModel"
+#define TB_RPC_SET_USE_MODEL "setUseModel"
 
 #define TB_TOPIC_LEN 96
 #define TB_PAYLOAD_LEN 192

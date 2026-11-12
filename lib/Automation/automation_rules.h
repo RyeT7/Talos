@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define AUTO_MIC_WINDOW 150
@@ -19,6 +20,12 @@
 #define AUTO_CLIMB_UNTIL_HOUR 3
 #define AUTO_OVERRIDE_S 3600
 #define AUTO_MIN_GAP_S 600
+#define AUTO_MODEL_MIN_CONFIDENCE 0.8f
+#define AUTO_MODEL_STREAK 3
+#define AUTO_MODEL_STALE_S 180
+#define AUTO_MODEL_MIN_SETPOINT 16
+#define AUTO_MODEL_MAX_SETPOINT 30
+#define AUTO_MODEL_SETTING_LEN 8
 #define AUTO_NEVER ( -( ( int64_t )1 << 40 ) )
 
 enum AutoAction {
@@ -45,6 +52,11 @@ struct AutoState {
     int64_t last_setpoint_change;
     int64_t override_until;
     bool enabled;
+    bool use_model;
+    char model_setting[AUTO_MODEL_SETTING_LEN];
+    int model_streak;
+    float model_confidence;
+    int64_t model_last_at;
 };
 
 struct AutoInput {
@@ -58,7 +70,7 @@ struct AutoInput {
     int setpoint;
 };
 
-static void auto_init ( struct AutoState* s, bool enabled ) {
+static void auto_init ( struct AutoState* s, bool enabled, bool use_model ) {
     memset( s, 0, sizeof( *s ) );
     s->presence = AUTO_PRESENCE_UNKNOWN;
     s->presence_since = 0;
@@ -66,6 +78,8 @@ static void auto_init ( struct AutoState* s, bool enabled ) {
     s->last_setpoint_change = AUTO_NEVER;
     s->override_until = AUTO_NEVER;
     s->enabled = enabled;
+    s->use_model = use_model;
+    s->model_last_at = AUTO_NEVER;
 }
 
 static const char* auto_action_rule ( enum AutoAction a ) {
@@ -141,11 +155,20 @@ static bool auto_climb_hour ( int hour ) {
     return hour >= AUTO_CLIMB_FROM_HOUR || hour < AUTO_CLIMB_UNTIL_HOUR;
 }
 
+static void auto_note_command ( struct AutoState* s, int64_t now_s, enum AutoAction action ) {
+    s->last_auto_cmd = now_s;
+
+    if ( action != AUTO_OFF ) {
+        s->last_setpoint_change = now_s;
+    }
+}
+
 static enum AutoAction auto_decide ( struct AutoState* s, const struct AutoInput* in, int* new_setpoint ) {
     auto_update_presence( s, in->now_s, in->mic_peak );
 
     if (
         !s->enabled
+        || s->use_model
         || in->now_s < s->override_until
         || in->now_s - s->last_auto_cmd < AUTO_MIN_GAP_S
         || s->presence == AUTO_PRESENCE_UNKNOWN
@@ -183,11 +206,68 @@ static enum AutoAction auto_decide ( struct AutoState* s, const struct AutoInput
     }
 
     if ( action != AUTO_NONE ) {
-        s->last_auto_cmd = in->now_s;
+        auto_note_command( s, in->now_s, action );
+    }
 
-        if ( action != AUTO_OFF ) {
-            s->last_setpoint_change = in->now_s;
+    return action;
+}
+
+static enum AutoAction auto_decide_model (
+    struct AutoState* s,
+    int64_t now_s,
+    const char* setting,
+    float confidence,
+    bool ac_on,
+    int setpoint,
+    int* new_setpoint
+) {
+    bool sure = confidence >= AUTO_MODEL_MIN_CONFIDENCE;
+    bool fresh = now_s - s->model_last_at <= AUTO_MODEL_STALE_S;
+
+    if ( sure && fresh && strcmp( setting, s->model_setting ) == 0 ) {
+        ++s->model_streak;
+    } else {
+        strlcpy( s->model_setting, sure ? setting : "", sizeof( s->model_setting ) );
+        s->model_streak = sure ? 1 : 0;
+    }
+
+    s->model_confidence = confidence;
+    s->model_last_at = now_s;
+
+    if (
+        !s->enabled
+        || !s->use_model
+        || now_s < s->override_until
+        || now_s - s->last_auto_cmd < AUTO_MIN_GAP_S
+        || s->model_streak < AUTO_MODEL_STREAK
+    ) {
+        return AUTO_NONE;
+    }
+
+    enum AutoAction action = AUTO_NONE;
+
+    if ( strcmp( setting, "off" ) == 0 ) {
+        if ( ac_on ) {
+            action = AUTO_OFF;
         }
+    } else {
+        int target = atoi( setting );
+
+        if ( target < AUTO_MODEL_MIN_SETPOINT || target > AUTO_MODEL_MAX_SETPOINT ) {
+            return AUTO_NONE;
+        }
+
+        if ( !ac_on ) {
+            action = AUTO_ON_COOL16;
+            *new_setpoint = target;
+        } else if ( setpoint != target ) {
+            action = AUTO_SETPOINT;
+            *new_setpoint = target;
+        }
+    }
+
+    if ( action != AUTO_NONE ) {
+        auto_note_command( s, now_s, action );
     }
 
     return action;

@@ -31,6 +31,17 @@ services:
       db:
         condition: service_healthy
 
+  models:
+    container_name: talos-models
+    build:
+      context: ../model
+      dockerfile: Dockerfile
+    networks: [talos-network]
+    environment:
+      - MQTT_HOST=app
+      - MQTT_PORT=4092
+    depends_on:
+      - app
 
 volumes:
   talos-db:
