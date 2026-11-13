@@ -17,23 +17,28 @@
 #include <stdlib.h>
 #include <string.h>
 
+// NVS keys for the automation on/off and rules/model switches, so they survive a reboot
 #define AUTO_NVS_NAMESPACE "talos"
 #define AUTO_NVS_KEY "auto_en"
 #define AUTO_NVS_MODEL_KEY "auto_model"
+// how often we resend the automation state to Blynk, in seconds
 #define AUTO_BLYNK_SYNC_S 60
 #define AUTO_LAST_LEN 160
 #define AUTO_STATE_LEN 32
 
+// the automation state, shared between the logger task and the MQTT callbacks so it's behind a mutex
 static struct AutoState auto_state;
 static SemaphoreHandle_t auto_mutex = NULL;
 static char auto_last_action[AUTO_LAST_LEN] = "none";
 static char auto_override_source[AUTO_LAST_LEN] = "";
 static int64_t auto_last_blynk_sync = AUTO_NEVER;
 
+// seconds since boot
 static int64_t auto_now_s () {
     return esp_timer_get_time() / 1'000'000;
 }
 
+// reads a flag from NVS, uses the fallback if it was never saved
 static bool automation_load_flag ( const char* key, uint8_t fallback ) {
     nvs_handle_t h;
     uint8_t value = fallback;
@@ -46,6 +51,7 @@ static bool automation_load_flag ( const char* key, uint8_t fallback ) {
     return value != 0;
 }
 
+// saves a flag to NVS
 static void automation_save_flag ( const char* key, bool on ) {
     nvs_handle_t h;
 
@@ -59,6 +65,7 @@ static void automation_save_flag ( const char* key, bool on ) {
     nvs_close( h );
 }
 
+// turns the automation on or off, saves it and tells both dashboards
 static void automation_set_enabled ( bool on ) {
     if ( !auto_mutex ) {
         return;
@@ -78,6 +85,7 @@ static void automation_set_enabled ( bool on ) {
     thingsboard_send_automation( on );
 }
 
+// switches between the rules and the model, saves it and tells ThingsBoard
 static void automation_set_use_model ( bool use_model ) {
     if ( !auto_mutex ) {
         return;
@@ -96,6 +104,7 @@ static void automation_set_use_model ( bool use_model ) {
     thingsboard_send_use_model( use_model );
 }
 
+// is the model in charge or the rules
 static bool automation_uses_model () {
     if ( !auto_mutex ) {
         return false;
@@ -108,6 +117,7 @@ static bool automation_uses_model () {
     return use_model;
 }
 
+// is the automation on at all
 static bool automation_is_enabled () {
     if ( !auto_mutex ) {
         return false;
@@ -120,6 +130,7 @@ static bool automation_is_enabled () {
     return on;
 }
 
+// called when someone uses the real remote or the console, pauses the automation and remembers who did it
 static void automation_on_manual ( const char* source ) {
     struct tm tm;
     char when[24];
@@ -138,6 +149,7 @@ static void automation_on_manual ( const char* source ) {
     printf("Auto: manual change (%s), paused for %d min\n", source, AUTO_OVERRIDE_S / 60);
 }
 
+// says what the automation just did on the speaker, there's only a clip for 16, 19, 20 and 21
 static void automation_announce ( enum AutoAction action, int setpoint ) {
     switch ( action ) {
     case AUTO_OFF:
@@ -165,6 +177,7 @@ static void automation_announce ( enum AutoAction action, int setpoint ) {
     }
 }
 
+// sends the IR command for an action, logs it, sends it to ThingsBoard and says it out loud
 static void automation_apply ( enum AutoAction action, int new_setpoint, const char* who, const char* prefix ) {
     esp_err_t err = ESP_OK;
     char state[AUTO_STATE_LEN];
@@ -195,11 +208,13 @@ static void automation_apply ( enum AutoAction action, int new_setpoint, const c
     sharp_ac_state_string( state, sizeof( state ) );
     sharp_ac_unlock();
 
+    // if the IR send failed don't log it or announce it
     if ( err != ESP_OK ) {
         printf("Auto: %s failed (%s)\n", who, esp_err_to_name( err ));
         return;
     }
 
+    // the logger row gets "auto:..." or "model:..." so we can tell who sent it
     char ir[LOG_IR_LEN];
     snprintf( ir, sizeof( ir ), "%s:%s", prefix, state );
     logger_set_ir( ir );
@@ -220,6 +235,7 @@ static void automation_apply ( enum AutoAction action, int new_setpoint, const c
     xSemaphoreGive( auto_mutex );
 }
 
+// called on every logger row, runs the rules engine and keeps Blynk in sync
 static void automation_on_row ( float temp, float hum, bool dht_valid, int mic_peak, const char* ir ) {
     struct AutoInput in = {
         .now_s = auto_now_s(),
@@ -252,6 +268,7 @@ static void automation_on_row ( float temp, float hum, bool dht_valid, int mic_p
     }
 }
 
+// called on every prediction from the model service, runs the model engine and forwards the prediction to ThingsBoard
 static void automation_on_prediction ( const char* setting, float confidence, float temp_in_10m, int anomalies ) {
     if ( !auto_mutex ) {
         return;
@@ -268,6 +285,7 @@ static void automation_on_prediction ( const char* setting, float confidence, fl
 
     xSemaphoreTake( auto_mutex, portMAX_DELAY );
 
+    // null recommendation means the model couldn't predict yet (not enough history), so only forward it
     if ( setting[0] ) {
         action = auto_decide_model( &auto_state, auto_now_s(), setting, confidence, ac_on, setpoint, &new_setpoint );
     }
@@ -284,6 +302,7 @@ static void automation_on_prediction ( const char* setting, float confidence, fl
     }
 }
 
+// presence as text for the status
 static const char* automation_presence_name ( enum AutoPresence p ) {
     switch ( p ) {
     case AUTO_PRESENCE_OCCUPIED: return "occupied";
@@ -294,6 +313,7 @@ static const char* automation_presence_name ( enum AutoPresence p ) {
     return "unknown (window filling)";
 }
 
+// prints everything for the "auto" console command
 static void automation_print_status () {
     int64_t now = auto_now_s();
 
@@ -349,6 +369,7 @@ static void automation_print_status () {
     sharp_ac_print_state();
 }
 
+// console commands: auto, auto on|off, auto use rules|model, auto say on|off|16|19|20|21
 static bool automation_console ( const char* cmd, const char* arg ) {
     if ( strcmp( cmd, "auto" ) != 0 ) {
         return false;
@@ -387,6 +408,7 @@ static bool automation_console ( const char* cmd, const char* arg ) {
     return true;
 }
 
+// loads the saved flags (both default to on) and hooks into the IR, console and logger callbacks
 static void automation_cfg () {
     auto_mutex = xSemaphoreCreateMutex();
     auto_init( &auto_state, automation_load_flag( AUTO_NVS_KEY, 1 ), automation_load_flag( AUTO_NVS_MODEL_KEY, 1 ) );

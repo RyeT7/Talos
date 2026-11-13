@@ -8,24 +8,31 @@ import numpy as np
 import pandas as pd
 import paho.mqtt.client as mqtt
 
+# the broker is the one inside the Go server, readings come in and predictions go back out to the board
 HERE = Path(__file__).parent
 MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "4092"))
 READINGS_TOPIC = "talos/readings"
 PREDICTIONS_TOPIC = "talos/predictions"
+# the board sends UTC, the models were trained on Jakarta time
 UTC_OFFSET = pd.Timedelta(hours=7)
+# keeps the last 40 minutes of rows (1200 x 2 seconds), enough for the 30 minute features
 HISTORY_ROWS = 1200
+# same occupancy as 00_preprocessing, a spike over double the 5 minute median and it stays occupied for 15 minutes
 ACTIVITY_RATIO = 2.0
 ACTIVITY_HOLD_ROWS = 450
 
+# the three models from the notebooks
 forecast = joblib.load(HERE / "temp_forecast_model.pkl")
 anomaly = joblib.load(HERE / "anomaly_model.pkl")
 recommender = joblib.load(HERE / "ac_recommender_model.pkl")
 
+# the recent rows, the minute we're collecting, and how many anomalies came in during it
 rows = deque(maxlen=HISTORY_ROWS)
 state = {"minute": None, "anomalies": 0}
 
 
+# checks one row against the previous one with the anomaly model, same features as 02_anomaly_detection
 def is_anomaly(row, prev):
     x = pd.DataFrame([{
         "temp_c": row["temp_c"],
@@ -37,6 +44,7 @@ def is_anomaly(row, prev):
     return anomaly["model"].predict(x[anomaly["features"]])[0] == -1
 
 
+# builds the same per minute table as 00_preprocessing out of the rows we have
 def minutes():
     df = pd.DataFrame(rows)
     df["mic_peak"] = df["mic_peak"].clip(upper=5_000_000)
@@ -61,6 +69,7 @@ def minutes():
         "weekday": "last",
     }).dropna()
 
+    # shift by time instead of rows, so a gap doesn't make it look at the wrong minute
     m["temp_change_5m"] = m["temp_c"] - m["temp_c"].shift(freq="5min")
     m["temp_30m_ago"] = m["temp_c"].shift(freq="30min")
     m["hour_sin"] = np.sin(2 * np.pi * m["hour"] / 24)
@@ -68,6 +77,7 @@ def minutes():
     return m
 
 
+# runs the forecast and the recommender for one minute, either one stays None if it doesn't have enough history yet
 def predict(minute):
     m = minutes()
 
@@ -97,12 +107,14 @@ def predict(minute):
     return out
 
 
+# called on every reading from the board
 def on_message(client, userdata, msg):
     try:
         r = json.loads(msg.payload)
     except ValueError:
         return
 
+    # skip rows without a time or a DHT reading
     if r.get("ts") is None or r.get("temperature") is None or r.get("humidity") is None:
         return
 
@@ -115,11 +127,13 @@ def on_message(client, userdata, msg):
         "setpoint": float(r.get("ac_setpoint") or 21),
     }
 
+    # throw out values the DHT22 can't actually give, same as the notebook
     if not (10 <= row["temp_c"] <= 45 and 0 <= row["humidity_pct"] <= 100):
         return
 
     minute = row["pc_time"].floor("1min")
 
+    # a new minute started, so predict the one that just finished and send it
     if state["minute"] is not None and minute > state["minute"]:
         out = predict(state["minute"])
 
@@ -130,6 +144,7 @@ def on_message(client, userdata, msg):
 
         state["anomalies"] = 0
 
+    # count the anomalies within the minute, then keep the row
     if is_anomaly(row, rows[-1] if rows else None):
         state["anomalies"] += 1
 
@@ -137,11 +152,13 @@ def on_message(client, userdata, msg):
     state["minute"] = minute
 
 
+# subscribe again on every connect
 def on_connect(client, userdata, flags, reason_code, properties):
     print(f"mqtt: connected ({reason_code})", flush=True)
     client.subscribe(READINGS_TOPIC, qos=1)
 
 
+# keeps retrying until the broker is up
 client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="talos-models")
 client.on_connect = on_connect
 client.on_message = on_message

@@ -1,18 +1,23 @@
+// reads the board's serial output on Windows and saves the CSV rows into a file with the PC time in front
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
 
+// the board prints its rows as "CSV,..." so we can pick them out from the other logs
 #define LINE_LEN 512
 #define CSV_PREFIX "CSV,"
 #define CSV_HEADER "uptime_ms,temp_c,humidity_pct,mic_peak,ir_cmd"
 
+// set to 0 by Ctrl+C so the loop stops and the file gets closed properly
 static volatile LONG running = 1;
 
+// Ctrl+C handler
 static BOOL WINAPI on_ctrl ( DWORD type ) {
     InterlockedExchange( &running, 0 );
     return TRUE;
 }
 
+// opens the COM port at 115200 8N1, no flow control
 static HANDLE open_port ( const char* port ) {
     char path[64];
     snprintf( path, sizeof( path ), "\\\\.\\%s", port );
@@ -34,11 +39,13 @@ static HANDLE open_port ( const char* port ) {
     dcb.fParity = FALSE;
     dcb.fOutxCtsFlow = FALSE;
     dcb.fOutxDsrFlow = FALSE;
+    // DTR and RTS off so opening the port doesn't reset the board
     dcb.fDtrControl = DTR_CONTROL_DISABLE;
     dcb.fRtsControl = RTS_CONTROL_DISABLE;
     dcb.fOutX = FALSE;
     dcb.fInX = FALSE;
 
+    // reads give up after 200 ms so we can check if Ctrl+C was pressed
     COMMTIMEOUTS timeouts = { 0 };
     timeouts.ReadIntervalTimeout = 50;
     timeouts.ReadTotalTimeoutConstant = 200;
@@ -51,6 +58,7 @@ static HANDLE open_port ( const char* port ) {
     return h;
 }
 
+// opens the CSV to append, writes the header only if the file is new
 static FILE* open_csv ( const char* path ) {
     FILE* f = fopen( path, "ab" );
 
@@ -68,6 +76,7 @@ static FILE* open_csv ( const char* path ) {
     return f;
 }
 
+// takes one line from the board, only keeps the CSV rows and puts the PC time in front
 static void handle_line ( FILE* out, const char* line ) {
     size_t prefix_len = strlen( CSV_PREFIX );
 
@@ -77,6 +86,7 @@ static void handle_line ( FILE* out, const char* line ) {
 
     const char* row = line + prefix_len;
 
+    // the board prints the header on boot, we already have one
     if ( strcmp( row, CSV_HEADER ) == 0 ) {
         return;
     }
@@ -97,6 +107,7 @@ static void handle_line ( FILE* out, const char* line ) {
     printf( "%s,%s\n", stamp, row );
 }
 
+// usage: log_csv [port] [file], defaults to COM8 and data.csv
 int main ( int argc, char** argv ) {
     const char* port = argc > 1 ? argv[1] : "COM8";
     const char* csv_path = argc > 2 ? argv[2] : "data.csv";
@@ -123,6 +134,7 @@ int main ( int argc, char** argv ) {
     size_t len = 0;
     char buf[256];
 
+    // read whatever came in and cut it into lines
     while ( running ) {
         DWORD got = 0;
 

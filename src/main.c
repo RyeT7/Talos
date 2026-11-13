@@ -77,25 +77,32 @@ static void start_dht_speaker_loop () {
     xTaskCreate( dht_speaker_task, "dht_speaker", 4'096, NULL, 5, NULL );
 }
 
+// sets everything up, then the main loop handles the mic and the screen
 void app_main() {
     // set up the screen first so we can see stuff early
     oled_cfg();
     oled_startup_commands();
     
+    // mic for the presence and the audio bars
     mic_cfg();
 
+    // speaker and the task that plays the voice clips
     speaker_cfg();
     voice_cfg();
 
+    // DHT for temp and humidity
     dht_cfg();
 
-    // wifi and Blynk, also tells it what to do when Blynk sends us data
+    // the AC state lock, everything after this can touch the AC
     sharp_ac_lock_init();
 
+    // wifi and Blynk, also tells it what to do when Blynk sends us data
     blynk_cfg( on_blynk_downlink );
+    // SNTP, the automation, ThingsBoard and the database upload, they all wait for wifi by themselves
     clock_cfg();
     automation_cfg();
     thingsboard_cfg( automation_is_enabled, automation_set_enabled );
+    // the speaker and the model switch also go to ThingsBoard, and predictions from the model service go to the automation
     speaker_set_state_cb( thingsboard_note_speaker );
     thingsboard_cfg_model( automation_uses_model, automation_set_use_model );
     database_set_prediction_cb( automation_on_prediction );
@@ -106,12 +113,14 @@ void app_main() {
     start_ir_listen_loop( sharp_ac_on_frame );
     start_sharp_ac_console();
 
+    // DHT and the 2 second logger in their own tasks
     start_dht_speaker_loop();
     start_logger_loop();
 
     // main loop, reads the mic and decides what to show on the screen
     while (true) {
         struct AudioLevel level = read_audio();
+        // the logger keeps the loudest mic reading for each row
         logger_add_audio( level.level_left, level.level_right );
         // printf("L: %d  R: %d\n", level.level_left, level.level_right);
 
@@ -121,6 +130,7 @@ void app_main() {
         bool loud = level.level_left > SOUND_THRESHOLD
                 || level.level_right > SOUND_THRESHOLD;
 
+        // ThingsBoard gets whether the bars showed up
         thingsboard_note_oled( loud );
 
         if ( loud ) {

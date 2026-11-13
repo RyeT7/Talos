@@ -11,10 +11,12 @@
 #include <stdio.h>
 #include <string.h>
 
+// volume for the clips, up to 4 clips can wait in line, and the clips have to be 16 kHz like the speaker
 #define VOICE_VOLUME 70
 #define VOICE_QUEUE_LEN 4
 #define VOICE_SAMPLE_RATE 16000
 
+// one clip for each thing the automation can say
 enum VoiceClip {
     VOICE_AC_OFF,
     VOICE_AC_ON_16,
@@ -25,6 +27,7 @@ enum VoiceClip {
     VOICE_CLIP_COUNT,
 };
 
+// the WAVs embedded in the firmware, the linker makes these start and end symbols from the file names
 extern const uint8_t voice_ac_off_start[] asm( "_binary_ac_off_wav_start" );
 extern const uint8_t voice_ac_off_end[] asm( "_binary_ac_off_wav_end" );
 extern const uint8_t voice_ac_on_16_start[] asm( "_binary_ac_on_16_wav_start" );
@@ -38,6 +41,7 @@ extern const uint8_t voice_set_20_end[] asm( "_binary_set_20_wav_end" );
 extern const uint8_t voice_set_21_start[] asm( "_binary_set_21_wav_start" );
 extern const uint8_t voice_set_21_end[] asm( "_binary_set_21_wav_end" );
 
+// where a clip is in flash and its name for the logs
 struct VoiceWav {
     const uint8_t* start;
     const uint8_t* end;
@@ -53,8 +57,10 @@ static const struct VoiceWav voice_wavs[VOICE_CLIP_COUNT] = {
     [VOICE_SET_21] = { voice_set_21_start, voice_set_21_end, "set_21" },
 };
 
+// clips waiting to be played
 static QueueHandle_t voice_queue = NULL;
 
+// WAVs are little endian, so read the numbers byte by byte
 static uint32_t voice_u32 ( const uint8_t* p ) {
     return p[0] | ( p[1] << 8 ) | ( p[2] << 16 ) | ( ( uint32_t )p[3] << 24 );
 }
@@ -63,6 +69,7 @@ static uint16_t voice_u16 ( const uint8_t* p ) {
     return p[0] | ( p[1] << 8 );
 }
 
+// walks the RIFF chunks to find the samples, only ok if the fmt chunk says PCM, mono, 16 kHz, 16 bit
 static bool voice_find_pcm ( const struct VoiceWav* wav, const uint8_t** pcm, size_t* count ) {
     const uint8_t* p = wav->start;
     const uint8_t* end = wav->end;
@@ -93,12 +100,14 @@ static bool voice_find_pcm ( const struct VoiceWav* wav, const uint8_t** pcm, si
             return format_ok;
         }
 
+        // chunks are padded to an even size
         p = body + size + ( size & 1 );
     }
 
     return false;
 }
 
+// plays the clips one by one in its own task, so whoever asked doesn't have to wait 3 seconds
 static void voice_task ( void* arg ) {
     enum VoiceClip clip;
 
@@ -119,6 +128,7 @@ static void voice_task ( void* arg ) {
     }
 }
 
+// queues a clip and returns right away, skips it if the queue is full
 static void voice_say ( enum VoiceClip clip ) {
     if ( !voice_queue || clip < 0 || clip >= VOICE_CLIP_COUNT ) {
         return;
@@ -129,6 +139,7 @@ static void voice_say ( enum VoiceClip clip ) {
     }
 }
 
+// makes the queue and starts the voice task
 static void voice_cfg () {
     voice_queue = xQueueCreate( VOICE_QUEUE_LEN, sizeof( enum VoiceClip ) );
     xTaskCreate( voice_task, "voice", 4'096, NULL, 4, NULL );

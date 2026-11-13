@@ -14,6 +14,7 @@ import (
 	"github.com/mochi-mqtt/server/v2/packets"
 )
 
+// one row from the board, pointers for anything that can be null
 type Reading struct {
 	Ts          *int64   `json:"ts"`
 	UptimeMs    int64    `json:"uptime_ms"`
@@ -27,6 +28,7 @@ type Reading struct {
 	AcFan       *string  `json:"ac_fan"`
 }
 
+// makes the tables if they're not there yet, the AC columns got added later so they're added separately
 const createTable = `
 CREATE TABLE IF NOT EXISTS readings (
     ts          TIMESTAMPTZ,
@@ -47,16 +49,20 @@ CREATE TABLE IF NOT EXISTS predictions (
     payload     JSONB NOT NULL
 )`
 
+// the board can resend a row after reconnecting, the unique (ts, uptime_ms) makes sure it only goes in once
 const insertReading = `
 INSERT INTO readings (ts, uptime_ms, temperature, humidity, mic_peak, ir_cmd, ac_power, ac_mode, ac_setpoint, ac_fan)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT DO NOTHING`
 
+// predictions are stored as they come, the payload is already JSON
 const insertPrediction = `INSERT INTO predictions (payload) VALUES ($1)`
 
+// runs the MQTT broker for the board and the model service, and writes everything it gets into PostgreSQL
 func main() {
 	ctx := context.Background()
 
+	// connect to PostgreSQL and make the tables
 	db, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatal(err)
@@ -66,8 +72,10 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// inline client so the server itself can subscribe to the topics
 	server := mqtt.New(&mqtt.Options{InlineClient: true})
 
+	// no auth, it's only on the LAN
 	if err := server.AddHook(new(auth.AllowHook), nil); err != nil {
 		log.Fatal(err)
 	}
@@ -76,6 +84,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// every reading from the board goes into readings
 	err = server.Subscribe("talos/readings", 1, func(cl *mqtt.Client, sub packets.Subscription, pk packets.Packet) {
 		var r Reading
 
@@ -86,6 +95,7 @@ func main() {
 
 		var ts *time.Time
 
+		// no ts means the board's clock wasn't synced, so it stays null and received_at is the time
 		if r.Ts != nil {
 			t := time.UnixMilli(*r.Ts)
 			ts = &t
@@ -100,6 +110,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// every prediction from the model service goes into predictions
 	err = server.Subscribe("talos/predictions", 3, func(cl *mqtt.Client, sub packets.Subscription, pk packets.Packet) {
 		if !json.Valid(pk.Payload) {
 			log.Printf("bad prediction %q", pk.Payload)
@@ -115,6 +126,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// the board's will, just log when it goes online or offline
 	err = server.Subscribe("talos/status", 2, func(cl *mqtt.Client, sub packets.Subscription, pk packets.Packet) {
 		log.Printf("board is %s", pk.Payload)
 	})
@@ -123,6 +135,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// start the broker and keep running
 	if err := server.Serve(); err != nil {
 		log.Fatal(err)
 	}

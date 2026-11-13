@@ -20,6 +20,7 @@
 #include <string.h>
 #include <sys/time.h>
 
+// one logger row plus the AC state at that moment, waiting to be uploaded
 struct DbRow {
     int64_t ts_ms;
     int64_t uptime_ms;
@@ -34,25 +35,30 @@ struct DbRow {
     enum SharpAcFan ac_fan;
 };
 
+// ring buffer of rows waiting for the broker, oldest at db_head
 static struct DbRow db_rows[DB_BUFFER_ROWS];
 static int db_head = 0;
 static int db_count = 0;
 static int db_dropped = 0;
 static portMUX_TYPE db_mux = portMUX_INITIALIZER_UNLOCKED;
 
+// the MQTT client, whether we're connected, the uploader task, and the last prediction we got
 static esp_mqtt_client_handle_t db_client = NULL;
 static volatile bool db_online = false;
 static TaskHandle_t db_task_handle = NULL;
 static char db_prediction[DB_PREDICTION_LEN] = "";
 
+// callback type for when the model service sends a prediction
 typedef void ( *db_prediction_cb_t )( const char* setting, float confidence, float temp_in_10m, int anomalies );
 
 static db_prediction_cb_t db_prediction_cb = NULL;
 
+// tells us who to call when a prediction comes in
 static void database_set_prediction_cb ( db_prediction_cb_t cb ) {
     db_prediction_cb = cb;
 }
 
+// tiny JSON reader, finds the key and copies out the string after it, good enough for our own flat payloads
 static bool db_json_string ( const char* json, const char* key, char* out, size_t len ) {
     const char* p = strstr( json, key );
 
@@ -79,6 +85,7 @@ static bool db_json_string ( const char* json, const char* key, char* out, size_
     return p[n] == '"';
 }
 
+// same thing but for numbers, false if the key isn't there or the value is null
 static bool db_json_number ( const char* json, const char* key, float* out ) {
     const char* p = strstr( json, key );
 
@@ -92,6 +99,7 @@ static bool db_json_number ( const char* json, const char* key, float* out ) {
     return end != p + strlen( key );
 }
 
+// pulls the fields out of a prediction and hands them to the callback
 static void db_handle_prediction ( const char* json ) {
     if ( !db_prediction_cb ) {
         return;
@@ -102,6 +110,7 @@ static void db_handle_prediction ( const char* json ) {
     float temp_in_10m;
     float anomalies;
 
+    // null recommendation means the model couldn't predict yet, send an empty setting so only the forecast and anomalies get forwarded
     if (
         !db_json_string( json, "\"ac_recommendation\":", setting, sizeof( setting ) )
         || !db_json_number( json, "\"confidence\":", &confidence )
@@ -121,6 +130,7 @@ static void db_handle_prediction ( const char* json ) {
     db_prediction_cb( setting, confidence, temp_in_10m, ( int )anomalies );
 }
 
+// real time in ms, or 0 if the clock isn't synced yet (sent as null so the server uses its own time)
 static int64_t db_epoch_ms () {
     struct tm tm;
 
@@ -134,6 +144,7 @@ static int64_t db_epoch_ms () {
     return ( int64_t )tv.tv_sec * 1'000 + tv.tv_usec / 1'000;
 }
 
+// called on every logger row, copies it with the AC state into the buffer and wakes the uploader
 static void database_on_row ( float temp, float hum, bool dht_valid, int mic_peak, const char* ir ) {
     struct DbRow row = {
         .ts_ms = db_epoch_ms(),
@@ -155,6 +166,7 @@ static void database_on_row ( float temp, float hum, bool dht_valid, int mic_pea
 
     portENTER_CRITICAL( &db_mux );
 
+    // buffer's full (broker down for 10 min), drop the oldest row
     if ( db_count == DB_BUFFER_ROWS ) {
         db_head = ( db_head + 1 ) % DB_BUFFER_ROWS;
         --db_count;
@@ -171,6 +183,7 @@ static void database_on_row ( float temp, float hum, bool dht_valid, int mic_pea
     }
 }
 
+// turns a row into the JSON the Go server expects, nulls for anything we don't have
 static int db_row_json ( char* out, size_t len, const struct DbRow* r ) {
     int n = 0;
 
@@ -208,6 +221,7 @@ static int db_row_json ( char* out, size_t len, const struct DbRow* r ) {
     return n;
 }
 
+// looks at the oldest row without taking it out
 static bool db_peek ( struct DbRow* out ) {
     bool has = false;
 
@@ -223,6 +237,7 @@ static bool db_peek ( struct DbRow* out ) {
     return has;
 }
 
+// takes the oldest row out once it got published
 static void db_pop () {
     portENTER_CRITICAL( &db_mux );
 
@@ -234,6 +249,7 @@ static void db_pop () {
     portEXIT_CRITICAL( &db_mux );
 }
 
+// uploader task, wakes on every new row or every 2 seconds and publishes as much as it can
 static void database_task ( void* arg ) {
     char json[DB_ROW_JSON_LEN];
     struct DbRow row;
@@ -241,6 +257,7 @@ static void database_task ( void* arg ) {
     while ( true ) {
         ulTaskNotifyTake( pdTRUE, pdMS_TO_TICKS( DB_RETRY_MS ) );
 
+        // stop when we're offline or the outbox is getting too big, rows stay in the buffer for later
         while ( db_online && esp_mqtt_client_get_outbox_size( db_client ) < DB_OUTBOX_MAX && db_peek( &row ) ) {
             int len = db_row_json( json, sizeof( json ), &row );
 
@@ -251,6 +268,7 @@ static void database_task ( void* arg ) {
             db_pop();
         }
 
+        // report how many rows got dropped since last time
         portENTER_CRITICAL( &db_mux );
         int dropped = db_dropped;
         db_dropped = 0;
@@ -262,8 +280,10 @@ static void database_task ( void* arg ) {
     }
 }
 
+// handles everything that happens on the MQTT side
 static void db_event_handler ( void* arg, esp_event_base_t base, int32_t id, void* data ) {
     switch ( ( esp_mqtt_event_id_t ) id ) {
+    // connected, say we're online, listen for predictions and flush whatever is waiting
     case MQTT_EVENT_CONNECTED:
         db_online = true;
         printf("Database: connected to %s\n", ADDRESS);
@@ -276,6 +296,7 @@ static void db_event_handler ( void* arg, esp_event_base_t base, int32_t id, voi
 
         break;
 
+    // got a prediction, only take it if it came in one piece
     case MQTT_EVENT_DATA: {
         esp_mqtt_event_handle_t event = data;
 
@@ -295,6 +316,7 @@ static void db_event_handler ( void* arg, esp_event_base_t base, int32_t id, voi
         break;
     }
 
+    // lost the connection, the client will try to reconnect by itself
     case MQTT_EVENT_DISCONNECTED:
         if ( db_online ) {
             printf("Database: disconnected\n");
@@ -308,6 +330,7 @@ static void db_event_handler ( void* arg, esp_event_base_t base, int32_t id, voi
     }
 }
 
+// starts the MQTT client once we get an IP, the will marks us offline if we drop
 static void db_on_ip ( void* arg, esp_event_base_t base, int32_t id, void* data ) {
     if ( db_client ) {
         return;
@@ -330,6 +353,7 @@ static void db_on_ip ( void* arg, esp_event_base_t base, int32_t id, void* data 
     esp_mqtt_client_start( db_client );
 }
 
+// starts the uploader and hooks into wifi and the logger, does nothing if ADDRESS is empty
 static void database_cfg () {
     if ( ADDRESS[0] == '\0' ) {
         printf("Database: ADDRESS not set, upload off\n");

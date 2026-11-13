@@ -12,6 +12,7 @@
 // how many samples we grab per read, both channels together
 #define NUM_SAMPLE 3'200
 
+// the sample buffer and the RX channel, shared between the mic files
 extern int32_t samples[NUM_SAMPLE];
 
 extern i2s_chan_handle_t rx;

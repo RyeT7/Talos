@@ -7,10 +7,12 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+// callback type for when the speaker starts or stops playing, ThingsBoard uses it
 typedef void ( *speaker_state_cb_t )( bool playing );
 
 static speaker_state_cb_t speaker_state_cb = NULL;
 
+// tells us who to call when it starts or stops
 static void speaker_set_state_cb ( speaker_state_cb_t cb ) {
     speaker_state_cb = cb;
 }
@@ -70,6 +72,7 @@ static void play_silence ( int duration_ms ) {
     play_tone( 0, duration_ms, 0 );
 }
 
+// plays 16 bit mono samples (the voice clips), volume goes from 0 to 100
 static void play_pcm_mono ( const uint8_t* pcm, size_t count, int volume ) {
     if ( volume > 100 ) {
         volume = 100;
@@ -82,6 +85,7 @@ static void play_pcm_mono ( const uint8_t* pcm, size_t count, int volume ) {
     while ( count > 0 ) {
         size_t frames = count < SPK_NUM_FRAMES ? count : SPK_NUM_FRAMES;
 
+        // samples are little endian, scale them by the volume and put the same one on left and right
         for ( size_t i = 0; i < frames; ++i ) {
             int16_t raw = ( int16_t )( pcm[2 * i] | ( pcm[2 * i + 1] << 8 ) );
             int16_t s = ( int16_t )( ( int32_t )raw * volume / 100 );
@@ -97,6 +101,7 @@ static void play_pcm_mono ( const uint8_t* pcm, size_t count, int volume ) {
         count -= frames;
     }
 
+    // a bit of silence at the end so the last chunk doesn't get cut off
     play_silence( 50 );
 
     if ( speaker_state_cb ) {

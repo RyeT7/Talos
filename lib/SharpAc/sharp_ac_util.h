@@ -13,24 +13,31 @@
 #include <stdlib.h>
 #include <string.h>
 
+// our own IR LED also hits the receiver, so ignore everything for 0.3 s after sending, and anything matching what we sent within 2 s
 #define SHARP_AC_ECHO_GUARD_US 300'000
 #define SHARP_AC_ECHO_MATCH_US 2'000'000
+// room for the "IR remote" or "console '...'" text that tells the automation who changed it
 #define SHARP_AC_SOURCE_LEN 48
 
+// callbacks for when someone changes the AC by hand, and for console commands this file doesn't know (like auto)
 typedef void ( *sharp_ac_manual_cb_t )( const char* source );
 typedef bool ( *sharp_ac_extra_cmd_cb_t )( const char* cmd, const char* arg );
 
+// the AC state is used by the console, the IR receiver, the automation and the uploads, so it's behind a mutex
 static SemaphoreHandle_t sharp_ac_mutex = NULL;
+// the last frame we sent and when, for the echo check
 static int64_t sharp_ac_last_tx_us = 0;
 static uint8_t sharp_ac_last_tx_frame[SHARP_AC_STATE_LEN];
 static bool sharp_ac_last_tx_valid = false;
 static sharp_ac_manual_cb_t sharp_ac_manual_cb = NULL;
 static sharp_ac_extra_cmd_cb_t sharp_ac_extra_cmd_cb = NULL;
 
+// makes the mutex, has to happen before anything touches the AC
 static void sharp_ac_lock_init () {
     sharp_ac_mutex = xSemaphoreCreateMutex();
 }
 
+// everyone locks this before reading or changing sharp_ac
 static void sharp_ac_lock () {
     xSemaphoreTake( sharp_ac_mutex, portMAX_DELAY );
 }
@@ -116,6 +123,7 @@ static void sharp_ac_print_state () {
     );
 }
 
+// short state like "on/cool/16C/fan_max" for the logger and ThingsBoard
 static void sharp_ac_state_string ( char* out, size_t len ) {
     snprintf(
         out,
@@ -163,6 +171,7 @@ static esp_err_t sharp_ac_send (
     sharp_ac_print_frame( "Sharp AC TX", sharp_ac_frame );
 
     esp_err_t err = ir_send_pulse_distance( &SHARP_AC_TIMING, sharp_ac_frame, SHARP_AC_BITS );
+    // remember what we sent so we can tell our own echo apart from the real remote
     sharp_ac_last_tx_us = esp_timer_get_time();
     memcpy( sharp_ac_last_tx_frame, sharp_ac_frame, sizeof( sharp_ac_last_tx_frame ) );
     sharp_ac_last_tx_valid = true;
@@ -340,6 +349,7 @@ static bool sharp_ac_handle_frame ( const rmt_symbol_word_t* symbols, size_t cou
     return true;
 }
 
+// true if this frame is just our own command bouncing back
 static bool sharp_ac_is_echo ( const rmt_symbol_word_t* symbols, size_t count ) {
     if ( !sharp_ac_last_tx_valid || esp_timer_get_time() - sharp_ac_last_tx_us >= SHARP_AC_ECHO_MATCH_US ) {
         return false;
@@ -351,6 +361,7 @@ static bool sharp_ac_is_echo ( const rmt_symbol_word_t* symbols, size_t count ) 
     return bits == SHARP_AC_BITS && memcmp( frame, sharp_ac_last_tx_frame, sizeof( frame ) ) == 0;
 }
 
+// called for every IR frame we receive, skips our own echoes and tells the automation if the real remote was used
 static void sharp_ac_on_frame ( const rmt_symbol_word_t* symbols, size_t count ) {
     if ( esp_timer_get_time() - sharp_ac_last_tx_us < SHARP_AC_ECHO_GUARD_US ) {
         return;
@@ -358,6 +369,7 @@ static void sharp_ac_on_frame ( const rmt_symbol_word_t* symbols, size_t count )
 
     sharp_ac_lock();
 
+    // an exact copy of what we just sent is our own echo, not the remote
     if ( sharp_ac_is_echo( symbols, count ) ) {
         sharp_ac_unlock();
         printf("Sharp AC RX: echo of our own command, ignored\n");
@@ -367,6 +379,7 @@ static void sharp_ac_on_frame ( const rmt_symbol_word_t* symbols, size_t count )
     bool valid = sharp_ac_handle_frame( symbols, count );
     sharp_ac_unlock();
 
+    // only a frame that actually decoded counts as a manual change
     if ( valid && sharp_ac_manual_cb ) {
         sharp_ac_manual_cb( "IR remote" );
     }
@@ -456,9 +469,11 @@ static bool sharp_ac_run_command ( char* line ) {
         return false;
     } else if ( strcmp( cmd, "replay" ) == 0 ) {
         err = ir_replay_last();
+        // the replay can echo too
         sharp_ac_last_tx_us = esp_timer_get_time();
         printf("IR: replay %s\n", err == ESP_OK ? "sent" : "failed (nothing captured yet?)");
         return false;
+    // let the automation handle its own commands
     } else if ( sharp_ac_extra_cmd_cb && sharp_ac_extra_cmd_cb( cmd, arg ) ) {
         return false;
     // anything else just shows the help
@@ -508,6 +523,7 @@ static void sharp_ac_console_task ( void* arg ) {
             line[len] = '\0';
             len = 0;
 
+            // what the automation shows as the reason it paused
             char source[SHARP_AC_SOURCE_LEN];
             snprintf( source, sizeof( source ), "console '%.30s'", line );
 
@@ -515,6 +531,7 @@ static void sharp_ac_console_task ( void* arg ) {
             bool manual = sharp_ac_run_command( line );
             sharp_ac_unlock();
 
+            // a command that changed the AC pauses the automation
             if ( manual && sharp_ac_manual_cb ) {
                 sharp_ac_manual_cb( source );
             }

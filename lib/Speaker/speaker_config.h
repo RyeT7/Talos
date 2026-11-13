@@ -12,6 +12,7 @@
 // how many frames we fill up before sending them out
 #define SPK_NUM_FRAMES 256
 
+// the TX channel, it lives in speaker_init.h
 extern i2s_chan_handle_t tx;
 
 // speaker is on I2S port 1 since the mic already uses port 0
